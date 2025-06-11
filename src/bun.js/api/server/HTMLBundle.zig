@@ -135,6 +135,34 @@ pub const Route = struct {
         this.onAnyRequest(req, resp, true);
     }
 
+    /// Respond without a `uws.Request` pointer.
+    /// This is used when a handler returns an `HTMLBundle` asynchronously and
+    /// the original request object has been detached.
+    pub fn respond(this: *Route, resp: HTTPResponse, is_head: bool) void {
+        this.ref();
+        defer this.deref();
+
+        const server: AnyServer = this.server orelse {
+            resp.endWithoutBody(true);
+            return;
+        };
+
+        switch (this.state) {
+            .html => |html| {
+                if (is_head) {
+                    html.onHEAD(resp);
+                } else {
+                    html.on(resp);
+                }
+            },
+            else => {
+                // Bundle not ready; send a generic error.
+                resp.writeStatus("500 Internal Server Error");
+                resp.endWithoutBody(true);
+            },
+        }
+    }
+
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
         this.ref();
         defer this.deref();
