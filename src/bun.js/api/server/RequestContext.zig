@@ -1741,6 +1741,34 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     if (this.isAbortedOrEnded()) {
                         return;
                     }
+                    const resp_any: uws.AnyResponse = switch (comptime ThisServer.ssl_enabled) {
+                        true => .{ .SSL = this.resp.? },
+                        false => .{ .TCP = this.resp.? },
+                    };
+
+                    const response = this.response_ptr.?;
+                    const status_code = response.statusCode();
+                    const headers_ref = response.getFetchHeaders();
+
+                    var route = route_ptr.data;
+                    if (route.server == null) {
+                        route.server = this.server;
+                    }
+
+                    switch (route.state) {
+                        .html => |html| {
+                            this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
+                        },
+                        .err => |_log| {
+                            resp_any.writeStatus("500 Build Failed");
+                            resp_any.endWithoutBody(false);
+                        },
+                        else => {
+                            this.addPendingRoute(route, resp_any, status_code, headers_ref);
+                        },
+                    }
+
+                    value.* = .{ .Used = {} };
 
                     return;
                 },
