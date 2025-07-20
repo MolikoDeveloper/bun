@@ -245,7 +245,7 @@ pub const AnyRoute = union(enum) {
 
         if (argument.as(Response)) |response_ptr| {
             if (response_ptr.body.value == .Route) {
-                return .{.html = response_ptr.body.value.Route.dupeRef() };
+                return .{ .html = response_ptr.body.value.Route.dupeRef() };
             }
         }
 
@@ -618,6 +618,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         on_clienterror: JSC.Strong.Optional = .empty,
 
         inspector_server_id: JSC.Debugger.DebuggerId = .init(0),
+
+        /// Context used when converting JavaScript values into routes at
+        /// runtime. This keeps track of HTML bundles we've already seen so
+        /// we can reuse the same HTMLBundle.Route across multiple
+        /// responses.
+        init_ctx: AnyRoute.ServerInitContext,
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -1668,6 +1674,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 plugins.deref();
             }
 
+            this.init_ctx.dedupe_html_bundle_map.deinit();
+            this.init_ctx.framework_router_list.deinit();
+            this.init_ctx.js_string_allocations.free();
+            this.init_ctx.arena.deinit();
+
             bun.destroy(this);
         }
 
@@ -1695,7 +1706,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
                 .dev_server = dev_server,
+                // init_ctx will be assigned below
+                .init_ctx = undefined,
             });
+
+            server.init_ctx = .{
+                .arena = .init(bun.default_allocator),
+                .dedupe_html_bundle_map = .init(bun.default_allocator),
+                .js_string_allocations = bun.bake.StringRefList.empty,
+                .global = global,
+                .framework_router_list = std.ArrayList(bun.bake.Framework.FileSystemRouterType).init(bun.default_allocator),
+                .user_routes = &server.config.static_routes,
+            };
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(

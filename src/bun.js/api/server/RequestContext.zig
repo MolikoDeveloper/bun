@@ -1747,9 +1747,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     };
 
-                    if (route_ptr.data.server == null) {
-                        route_ptr.data.server = AnyServer.from(srv);
+                    var any_route = AnyRoute.htmlRouteFromJS(route_ptr.data.bundle.data.toJS(globalThis), &srv.init_ctx) catch {
+                        globalThis.throwOutOfMemory() catch {};
+                        return;
+                    } orelse AnyRoute{ .html = route_ptr };
+
+                    if (any_route.html.ptr != route_ptr.ptr) {
+                        any_route.ref();
+                        route_ptr.deref();
+                        value.* = .{ .Route = any_route.html.dupeRef() };
+                        route_ptr = any_route.html;
                     }
+
+                    any_route.setServer(AnyServer.from(srv));
 
                     const resp_ptr = this.resp.?;
                     const resp_any = uws.AnyResponse.init(resp_ptr);
@@ -1798,7 +1808,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         },
                         else => {
                             this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
-                        }
+                        },
                     }
                     return;
                 },
