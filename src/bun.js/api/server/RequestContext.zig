@@ -1752,14 +1752,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     var route = route_ptr.data;
                     if (route.server == null) {
-                        route.server = this.server;
+                        if (this.server) |srv| {
+                            route.server = JSC.API.AnyServer.from(srv);
+                        }
                     }
 
                     switch (route.state) {
                         .html => |html| {
                             this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
                         },
-                        .err => |_log| {
+                        .err => |_| {
                             resp_any.writeStatus("500 Build Failed");
                             resp_any.endWithoutBody(false);
                         },
