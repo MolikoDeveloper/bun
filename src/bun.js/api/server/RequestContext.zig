@@ -1751,6 +1751,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         route_ptr.data.server = AnyServer.from(srv);
                     }
 
+                    // consume the body to avoid double-ref when Response is finalized
+                    value.* = .{ .Used = {} };
+
                     const resp_ptr = this.resp.?;
                     const resp_any = uws.AnyResponse.init(resp_ptr);
                     const response = this.response_ptr.?;
