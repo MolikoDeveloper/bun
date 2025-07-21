@@ -1734,6 +1734,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 },
                 // todo
                 // requires better implementation.
+                // Logic mirrors the route dispatch in server.zig
                 .Route => |route_ptr| {
                     if (bun.Environment.enable_logs)
                         ctxLog(".Route.doRenderWithBody route {s}", .{@tagName(route_ptr.data.state)});
