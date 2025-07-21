@@ -1741,37 +1741,65 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     if (this.isAbortedOrEnded()) {
                         return;
                     }
-                    const resp_any: uws.AnyResponse = switch (comptime ThisServer.ssl_enabled) {
-                        true => .{ .SSL = this.resp.? },
-                        false => .{ .TCP = this.resp.? },
+
+                    const srv = this.server orelse {
+                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
+                        return;
                     };
 
-                    const response = this.response_ptr.?;
-                    const status_code = response.statusCode();
-                    const headers_ref = response.getFetchHeaders();
-
-                    var route = route_ptr.data;
-                    if (route.server == null) {
-                        if (this.server) |srv| {
-                            route.server = JSC.API.AnyServer.from(srv);
-                        }
+                    if (route_ptr.data.server == null) {
+                        route_ptr.data.server = AnyServer.from(srv);
                     }
 
-                    switch (route.state) {
+                    const resp_ptr = this.resp.?;
+                    const resp_any = uws.AnyResponse.init(resp_ptr);
+                    const response = this.response_ptr.?;
+                    const status_code = response.statusCode();
+                    var headers_ref: ?*FetchHeaders = null;
+                    if (response.init.headers) |h| {
+                        headers_ref = h.cloneThis(globalThis) catch |err| {
+                            _ = globalThis.takeException(err);
+                            return;
+                        };
+                    }
+
+                    if (this.req) |req| {
+                        if (this.method == .HEAD or this.method == .GET) {
+                            if (status_code != 200 or headers_ref != null) {
+                                if (route_ptr.data.state == .html) {
+                                    this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
+                                } else {
+                                    this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                                }
+                                return;
+                            }
+                        }
+                        if (this.method == .HEAD) {
+                            route_ptr.data.onHEADRequest(req, resp_any);
+                        } else {
+                            route_ptr.data.onRequest(req, resp_any);
+                        }
+                        if (headers_ref) |h| h.deref();
+                        return;
+                    }
+
+                    switch (route_ptr.data.state) {
                         .html => |html| {
                             this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
                         },
-                        .err => |_| {
+                        .err => |log| {
+                            if (bun.Environment.enable_logs)
+                                ctxLog("HTML route build failed", .{});
+                            if (srv.config.isDevelopment()) {
+                                _ = log;
+                            }
                             resp_any.writeStatus("500 Build Failed");
                             resp_any.endWithoutBody(false);
                         },
                         else => {
-                            this.addPendingRoute(route, resp_any, status_code, headers_ref);
+                            this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
                         },
                     }
-
-                    value.* = .{ .Used = {} };
-
                     return;
                 },
                 .Locked => |*lock| {
