@@ -1747,7 +1747,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     };
 
-                    route_ptr.data.server = AnyServer.from(srv);
                     const server_any = AnyServer.from(srv);
                     route_ptr.data.server = server_any;
 

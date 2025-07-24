@@ -709,6 +709,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             });
             this.dev_server = dev;
             _ = try dev.setRoutes(this);
+            _ = this.getOrLoadPlugins(.{ .dev_server = dev });
             return dev;
         }
 
