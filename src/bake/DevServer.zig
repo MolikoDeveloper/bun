@@ -2847,9 +2847,13 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
     return bundle_index;
 }
 
-fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
-    const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
-    dev.html_router.fallback = bundle_index.toOptional();
+/// Register an HTMLBundle as the catch-all route for this DevServer.
+///
+/// This is used by `RequestContext` when a handler returns an HTMLBundle
+/// response without having a route defined in `Bun.serve`.
+pub fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
+    _ = try getOrPutRouteBundle(dev, .{ .html = html });
+    dev.html_router.fallback = html;
 }
 
 const ErrorPageKind = enum {

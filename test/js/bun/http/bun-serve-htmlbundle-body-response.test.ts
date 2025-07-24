@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const dir = tempDirWithFiles("htmlbundle", {
@@ -85,4 +85,37 @@ test("fetch () => Response(HTMLBundle)", async () => {
   expect(text).toContain("Hello HTML");
   const missing = await fetch(`${server.url}/missing`);
   expect(missing.status).toBe(404);
+});
+
+test("warns when Response(HTMLBundle) returned from fetch without route", async () => {
+  const dir2 = tempDirWithFiles("htmlbundle-warning", {
+    "index.html": "<!DOCTYPE html><html><body>Hello HTML</body></html>",
+    "server.ts": `import html from "./index.html";
+const server = Bun.serve({
+  port: 0,
+  development: true,
+  fetch() {
+    return new Response(html);
+  },
+});
+process.send?.(server.url.toString());`,
+  });
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using proc = Bun.spawn({
+    cwd: dir2,
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    stderr: "pipe",
+    ipc(message) {
+      if (typeof message === "string") resolve(message);
+    },
+  });
+
+  const url = await promise;
+  await fetch(url);
+  proc.kill();
+  await proc.exited;
+  const stderr = await proc.stderr.text();
+  expect(stderr).toContain("HMR disabled: register HTMLBundle in `routes` to enable dev server.");
 });
