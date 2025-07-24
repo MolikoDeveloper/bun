@@ -1752,8 +1752,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     route_ptr.data.server = server_any;
 
                     if (srv.config.development.isHMREnabled()) {
-                        if (try server_any.ensureDevServer()) |dev| {
-                            bake.DevServer.registerCatchAllHtmlRoute(dev, route_ptr.data) catch bun.outOfMemory();
+                        const dev = server_any.ensureDevServer() catch null;
+                        if (dev) |d| {
+                            bake.DevServer.registerCatchAllHtmlRoute(d, route_ptr.data) catch bun.outOfMemory();
                         } else {
                             const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
                             jsc.ConsoleObject.messageWithTypeAndLevel(
