@@ -200,7 +200,7 @@ pub const AnyRoute = union(enum) {
 
         if (argument.as(Response)) |response_ptr| {
             if (response_ptr.body.value == .Route) {
-                return .{.html = response_ptr.body.value.Route.dupeRef() };
+                return .{ .html = response_ptr.body.value.Route.dupeRef() };
             }
         }
 
@@ -692,6 +692,24 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (this.app) |app| {
                 app.setMaxHTTPHeaderSize(max_header_size);
             }
+        }
+
+        pub fn ensureDevServer(this: *ThisServer) bun.JSOOM!?*bun.bake.DevServer {
+            if (this.dev_server) |dev| return dev;
+            if (!this.config.development.isHMREnabled()) return null;
+
+            const framework = bake.Framework.auto(bun.default_allocator, &this.vm.transpiler.resolver, &.{}) catch return error.OutOfMemory;
+            const dev = try bake.DevServer.init(.{
+                .arena = bun.default_allocator,
+                .root = bun.fs.FileSystem.instance.top_level_dir,
+                .vm = this.vm,
+                .framework = framework,
+                .bundler_options = bake.SplitBundlerOptions.empty,
+                .broadcast_console_log_from_browser_to_server = this.config.broadcast_console_log_from_browser_to_server_for_bake,
+            });
+            this.dev_server = dev;
+            _ = try dev.setRoutes(this);
+            return dev;
         }
 
         pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyRoute, method: HTTP.Method.Optional) !void {
@@ -3204,6 +3222,16 @@ pub const AnyServer = struct {
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
+
+    pub fn ensureDevServer(this: AnyServer) bun.JSOOM!?*bun.bake.DevServer {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).ensureDevServer(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).ensureDevServer(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).ensureDevServer(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).ensureDevServer(),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
 };
 
 extern fn Bun__addInspector(bool, *anyopaque, *jsc.JSGlobalObject) void;
@@ -3425,3 +3453,4 @@ const Fetch = WebCore.Fetch;
 const Headers = WebCore.Headers;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
+const bake = bun.bake;
