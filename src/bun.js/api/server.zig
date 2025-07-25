@@ -705,14 +705,38 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn ensureDevServer(this: *ThisServer) bun.JSOOM!?*bun.bake.DevServer {
             if (this.dev_server) |dev| return dev;
             if (!this.config.development.isHMREnabled()) return null;
-
+            
             const framework = bake.Framework.auto(bun.default_allocator, &this.vm.transpiler.resolver, &.{}) catch return error.OutOfMemory;
+            
+            const bundler_options = if (this.config.bake) |*b|
+                b.bundler_options
+            else blk: {
+                var opts = bake.SplitBundlerOptions.empty;
+                const o = this.vm.transpiler.options.transform_options;
+                switch (o.serve_env_behavior) {
+                    .prefix => {
+                        opts.client.env_prefix = o.serve_env_prefix;
+                        opts.client.env = .prefix;
+                    },
+                    .load_all => opts.client.env = .load_all,
+                    .disable => opts.client.env = .disable,
+                    else => {},
+                }
+
+                if (o.serve_define) |define| {
+                    opts.client.define = define;
+                    opts.server.define = define;
+                    opts.ssr.define = define;
+                }
+                break :blk opts;
+            };
+
             const dev = try bake.DevServer.init(.{
                 .arena = bun.default_allocator,
                 .root = bun.fs.FileSystem.instance.top_level_dir,
                 .vm = this.vm,
                 .framework = framework,
-                .bundler_options = bake.SplitBundlerOptions.empty,
+                .bundler_options = bundler_options,
                 .broadcast_console_log_from_browser_to_server = this.config.broadcast_console_log_from_browser_to_server_for_bake,
             });
             this.dev_server = dev;

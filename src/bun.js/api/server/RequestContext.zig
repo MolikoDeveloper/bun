@@ -1742,31 +1742,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
 
-                    const srv = this.server orelse {
-                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
-                        return;
-                    };
-
-                    const server_any = AnyServer.from(srv);
-                    route_ptr.data.server = server_any;
-
-                    if (srv.config.development.isHMREnabled()) {
-                        const dev = server_any.ensureDevServer() catch null;
-                        if (dev) |d| {
-                            bake.DevServer.registerCatchAllHtmlRoute(d, route_ptr.data) catch bun.outOfMemory();
-                        } else {
-                            const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
-                            jsc.ConsoleObject.messageWithTypeAndLevel(
-                                undefined,
-                                jsc.ConsoleObject.MessageType.Log,
-                                jsc.ConsoleObject.MessageLevel.Warning,
-                                globalThis,
-                                &[_]jsc.JSValue{msg},
-                                1,
-                            );
-                        }
-                    }
-
                     const resp_ptr = this.resp.?;
                     const resp_any = uws.AnyResponse.init(resp_ptr);
                     const response = this.response_ptr.?;
@@ -1779,6 +1754,50 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         };
                     }
 
+                    const srv = this.server orelse {
+                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
+                        return;
+                    };
+
+                    const server_any = AnyServer.from(srv);
+                    route_ptr.data.server = server_any;
+
+                    // #region 
+                    // this fails with test fetch async () => Response(HTMLBundle) with headers 
+                    // fetch () => Response(HTMLBundle)
+                    var inject_from_dev = false;
+                    if (srv.config.development.isHMREnabled()) {
+                        const dev_server_was_null = srv.dev_server == null;
+                        const dev = server_any.ensureDevServer() catch null;
+                        if (dev) |d| {
+                            inject_from_dev = dev_server_was_null;
+                            if (inject_from_dev) {
+                                bake.DevServer.registerCatchAllHtmlRoute(d, route_ptr.data) catch bun.outOfMemory();
+                                if (this.req) |req| {
+                                    if (status_code != 200)
+                                        writeStatus(ThisServer.ssl_enabled, this.resp, status_code);
+                                    if (headers_ref) |h| {
+                                        writeHeaders(h, ThisServer.ssl_enabled, this.resp);
+                                    }
+                                    d.respondForHTMLBundle(route_ptr.data, req, resp_any) catch bun.outOfMemory();
+                                    if (headers_ref) |h| h.deref();
+                                    return;
+                                }
+                            }
+                        } else {
+                            const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
+                            jsc.ConsoleObject.messageWithTypeAndLevel(
+                                undefined,
+                                jsc.ConsoleObject.MessageType.Log,
+                                jsc.ConsoleObject.MessageLevel.Warning,
+                                globalThis,
+                                &[_]jsc.JSValue{msg},
+                                1,
+                            );
+                        }
+                    }
+                    // #endregion
+                    
                     if (this.req) |req| {
                         if (route_ptr.data.state == .html) {
                             this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
