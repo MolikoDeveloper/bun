@@ -601,6 +601,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (server.plugins) |p| {
                 return p.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
             }
+            
+            if (server.vm.transpiler.options.serve_plugins) |serve_plugins_config| {
+                if (serve_plugins_config.len > 0) {
+                    server.plugins = ServePlugins.init(serve_plugins_config);
+                    return server.plugins.?.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
+                }
+            }
+
             // no plugins
             return .{ .ready = null };
         }
