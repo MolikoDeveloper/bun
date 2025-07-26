@@ -2522,17 +2522,24 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (bun.Environment.enable_logs)
                 ctxLog("sendHtmlRoute status={d} method={s}", .{ status_code, @tagName(this.method) });
 
+            var route_to_send: *StaticRoute = html;
             if (status_code != 200 or headers_ref != null) {
-                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{ .server = html.server, .status_code = status_code, .headers = headers_ref });
-
+                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{
+                    .server = html.server,
+                    .status_code = status_code,
+                    .headers = headers_ref,
+                });
+                route_to_send = temp;
                 defer temp.deref();
-                temp.onWithMethod(this.method, resp_any);
-                if (headers_ref) |h| h.deref();
-            } else if (this.method == .HEAD) {
-                html.onHEAD(resp_any);
-            } else {
-                html.on(resp_any);
             }
+
+            if (this.method == .HEAD) {
+                route_to_send.onHEAD(resp_any);
+            } else {
+                route_to_send.on(resp_any);
+            }
+
+            if (headers_ref) |h| h.deref();
         }
 
         fn addPendingRoute(
