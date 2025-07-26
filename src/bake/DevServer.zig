@@ -957,6 +957,8 @@ fn ensureRouteIsBundled(
     kind: DeferredRequest.Handler.Kind,
     req: *Request,
     resp: AnyResponse,
+    status: u16,
+    headers: ?*jsc.WebCore.FetchHeaders,
 ) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
@@ -965,7 +967,7 @@ fn ensureRouteIsBundled(
             if (dev.current_bundle != null) {
                 try dev.next_bundle.route_queue.put(dev.allocator, route_bundle_index, {});
                 dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
-                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp, status, headers);
             } else {
                 // If plugins are not yet loaded, prepare them.
                 // In the case plugins are set to &.{}, this will not hit `.pending`.
@@ -1000,7 +1002,7 @@ fn ensureRouteIsBundled(
                     .pending => {
                         try dev.next_bundle.route_queue.put(dev.allocator, route_bundle_index, {});
                         dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
-                        try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                        try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp, status, headers);
                         return;
                     },
                     .err => {
@@ -1032,7 +1034,7 @@ fn ensureRouteIsBundled(
                     }
                 }
 
-                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp, status, headers);
 
                 dev.startAsyncBundle(
                     entry_points,
@@ -1045,7 +1047,7 @@ fn ensureRouteIsBundled(
         },
         .bundling => {
             bun.assert(dev.current_bundle != null);
-            try dev.deferRequest(&dev.current_bundle.?.requests, route_bundle_index, kind, req, resp);
+            try dev.deferRequest(&dev.current_bundle.?.requests, route_bundle_index, kind, req, resp, status, headers);
         },
         .possible_bundling_failures => {
             if (dev.bundling_failures.count() > 0) {
@@ -1071,7 +1073,7 @@ fn ensureRouteIsBundled(
         },
         .loaded => switch (kind) {
             .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
-            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
+            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST, status, headers),
         },
     }
 }
@@ -1083,13 +1085,15 @@ fn deferRequest(
     kind: DeferredRequest.Handler.Kind,
     req: *Request,
     resp: AnyResponse,
+    status: u16,
+    headers: ?*jsc.WebCore.FetchHeaders,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
     const method = bun.http.Method.which(req.method()) orelse .POST;
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .handler = switch (kind) {
-            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
+            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method, .status = status, .headers = headers } },
             .server_handler => .{
                 .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse return,
             },
@@ -1309,7 +1313,7 @@ fn onFrameworkRequestWithBundle(
     );
 }
 
-fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
+fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method, status: u16, headers: ?*jsc.WebCore.FetchHeaders) void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .html);
     const html = &route_bundle.data.html;
@@ -1327,7 +1331,14 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
         );
         break :generate html.cached_response.?;
     };
-    blob.onWithMethod(method, resp);
+    if (status != 200 or headers != null) {
+        var temp = StaticRoute.initFromAnyBlob(&blob.blob, .{ .server = blob.server, .status_code = status, .headers = headers });
+        defer temp.deref();
+        temp.onWithMethod(method, resp);
+        if (headers) |h| h.deref();
+    } else {
+        blob.onWithMethod(method, resp);
+    }
 }
 
 /// This payload is used to unref the source map weak reference if the page
@@ -1566,7 +1577,10 @@ pub const DeferredRequest = struct {
     fn deinit(this: *DeferredRequest) void {
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
-            .bundled_html_page, .aborted => {},
+            .bundled_html_page => |ram| {
+                if (ram.headers) |h| h.deref();
+            },
+            .aborted => {},
         }
     }
 
@@ -1579,6 +1593,7 @@ pub const DeferredRequest = struct {
             },
             .bundled_html_page => |r| {
                 r.response.endWithoutBody(true);
+                if (r.headers) |h| h.deref();
             },
             .aborted => return,
         }
@@ -1589,6 +1604,8 @@ pub const DeferredRequest = struct {
 const ResponseAndMethod = struct {
     response: AnyResponse,
     method: bun.http.Method,
+    status: u16,
+    headers: ?*jsc.WebCore.FetchHeaders,
 };
 
 pub fn startAsyncBundle(
@@ -2617,7 +2634,7 @@ pub fn finalizeBundle(
         switch (req.handler) {
             .aborted => continue,
             .server_handler => |saved| try dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
-            .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
+            .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method, ram.status, ram.headers),
         }
     }
 }
@@ -2784,6 +2801,8 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
             .server_handler,
             req,
             AnyResponse.init(resp),
+            200,
+            null,
         ) catch bun.outOfMemory();
         return;
     }
@@ -2796,8 +2815,15 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     sendBuiltInNotFound(resp);
 }
 
-pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) !void {
-    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp);
+pub fn respondForHTMLBundle(
+    dev: *DevServer,
+    html: *HTMLBundle.HTMLBundleRoute,
+    req: *uws.Request,
+    resp: AnyResponse,
+    status: u16,
+    headers: ?*jsc.WebCore.FetchHeaders,
+) !void {
+    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp, status, headers);
 }
 
 fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !RouteBundle.Index {
@@ -2847,8 +2873,11 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
 }
 
 pub fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
-    //const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
-    //dev.html_router.fallback = bundle_index.toOptional();
+    if (dev.html_router.fallback != null)
+        return;
+    if (dev.html_router.map.get("/")) |_| {
+        return; // user provided root HTML route
+    }
     _ = try getOrPutRouteBundle(dev, .{ .html = html });
     dev.html_router.fallback = html;
 }
@@ -3541,7 +3570,10 @@ pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle
     if (dev.router.matchSlow(pattern, &params)) |route_index| {
         return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
     }
-    if (dev.html_router.get(pattern)) |html| {
+    if (dev.html_router.map.get(pattern)) |html| {
+        return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
+    }
+    if (dev.html_router.fallback) |html| {
         return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
     }
     return null;
