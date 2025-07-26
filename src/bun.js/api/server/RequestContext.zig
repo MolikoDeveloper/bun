@@ -2523,7 +2523,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctxLog("sendHtmlRoute status={d} method={s}", .{ status_code, @tagName(this.method) });
 
             if (status_code != 200 or headers_ref != null) {
-                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{ .server = html.server, .status_code = status_code, .headers = headers_ref });
+                var temp = StaticRoute.initFromAnyBlob(
+                    &html.blob,
+                    .{ .server = html.server, .status_code = status_code, .headers = headers_ref, .mime_type = &MimeType.html },
+                );
 
                 defer temp.deref();
                 temp.onWithMethod(this.method, resp_any);

@@ -2847,8 +2847,10 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
 }
 
 pub fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
-    //const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
-    //dev.html_router.fallback = bundle_index.toOptional();
+    if (dev.html_router.fallback != null or dev.html_router.map.get("/") != null) {
+        debug("catch-all HTML route already registered or '/' exists; skipping", .{});
+        return;
+    }
     _ = try getOrPutRouteBundle(dev, .{ .html = html });
     dev.html_router.fallback = html;
 }
