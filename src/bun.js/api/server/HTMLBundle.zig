@@ -146,7 +146,7 @@ pub const Route = struct {
 
         if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
-                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
+                dev.respondForHTMLBundle(this, req, resp, 200, null) catch bun.outOfMemory();
                 return;
             }
 
