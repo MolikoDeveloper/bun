@@ -1781,7 +1781,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     if (this.req) |req| {
                         if (route_ptr.data.state == .html) {
-                            this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
+                            this.sendHtmlRoute(route_ptr.data, resp_any, status_code, headers_ref);
                             return;
                         }
                         if (this.method == .HEAD or this.method == .GET) {
@@ -1800,8 +1800,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
 
                     switch (route_ptr.data.state) {
-                        .html => |html| {
-                            this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
+                        .html => {
+                            this.sendHtmlRoute(route_ptr.data, resp_any, status_code, headers_ref);
                         },
                         .err => |log| {
                             if (bun.Environment.enable_logs)
@@ -2520,10 +2520,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
 
-        fn sendHtmlRoute(this: *RequestContext, html: *StaticRoute, resp_any: uws.AnyResponse, status_code: u16, headers_ref: ?*FetchHeaders) void {
+        fn sendHtmlRoute(this: *RequestContext, route: *HTMLBundle.Route, resp_any: uws.AnyResponse, status_code: u16, headers_ref: ?*FetchHeaders) void {
             if (bun.Environment.enable_logs)
                 ctxLog("sendHtmlRoute status={d} method={s}", .{ status_code, @tagName(this.method) });
 
+            if (this.server) |srv| {
+                if (srv.config.development.isHMREnabled()) {
+                    const dev = AnyServer.from(srv).ensureDevServer() catch null;
+                    if (dev) |d| {
+                        if (this.req) |req| {
+                            bake.DevServer.respondForHTMLBundle(d, route, req, resp_any, status_code, headers_ref) catch bun.outOfMemory();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            const html = route.state.html;
             if (status_code != 200 or headers_ref != null) {
                 var temp = StaticRoute.initFromAnyBlob(&html.blob, .{ .server = html.server, .status_code = status_code, .headers = headers_ref });
 
