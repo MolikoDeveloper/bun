@@ -2871,6 +2871,11 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
 }
 
 pub fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
+    if (dev.html_router.fallback) |_| {
+        Output.warn("DevServer catch-all HTML route already registered", .{});
+        return;
+    }
+
     //const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
     //dev.html_router.fallback = bundle_index.toOptional();
     _ = try getOrPutRouteBundle(dev, .{ .html = html });
@@ -3568,7 +3573,10 @@ pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle
     if (dev.router.matchSlow(pattern, &params)) |route_index| {
         return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
     }
-    if (dev.html_router.get(pattern)) |html| {
+    if (dev.html_router.map.get(pattern)) |html| {
+        return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
+    }
+    if (dev.html_router.fallback) |html| {
         return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
     }
     return null;
